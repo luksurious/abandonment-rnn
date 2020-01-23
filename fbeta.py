@@ -1,13 +1,6 @@
 from tensorflow.keras.callbacks import Callback
 from sklearn.metrics import fbeta_score
 
-START = 0.5
-END = 0.95
-STEP = 0.05
-FBETA_METRIC_NAME = "val_fbeta"
-
-# Notice that this callback only works with Keras 2.0.0
-
 
 class FBetaMetricCallback(Callback):
 

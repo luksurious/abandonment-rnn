@@ -1,154 +1,100 @@
 import time
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
 import numpy as np
 import random
-
-from data_provider import *
-from mouse_augment import augment_coord
-from training import train_model
-
-np.random.seed(123)
-random.seed(123)
-
-user_info = read_kge_log()
-data_frames = read_csv_logs(user_info)
-data_nc_with_km_sr, data_nc_without_km_sr = filter_data_frames(data_frames)
-
-data_nc_with_km_sr_last = get_data_last_only(data_nc_with_km_sr)
-data_nc_without_km_sr_last = get_data_last_only(data_nc_without_km_sr)
-data_nc_with_km_sr_solo = get_solo_only(data_nc_with_km_sr)
-data_nc_without_km_sr_solo = get_solo_only(data_nc_without_km_sr)
-
-users_tasks = map_user_tasks(data_frames, user_info)
-
-data_nc_with_km_sr_last_filtered = filter_by_user_info(user_info, data_nc_with_km_sr_last, users_tasks)
-data_nc_with_km_sr_solo_filtered = filter_by_user_info(user_info, data_nc_with_km_sr_solo, users_tasks)
+import argparse
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
-data_filtered_last = data_nc_with_km_sr_last_filtered + data_nc_without_km_sr_last
-data_filtered_solo = data_nc_with_km_sr_solo_filtered + data_nc_without_km_sr_solo
+def setup_arguments():
+    parser = argparse.ArgumentParser(description='Run an DL experiment on mouse movement data for abandonment research')
+
+    parser.add_argument('--layers', type=int, default=3, help='Depth of RNN')
+    parser.add_argument('--units', type=int, nargs='?', default=50, help='Units in RNN per layer')
+    parser.add_argument('--patience', type=int, default=10, help='Patience of keras callback')
+    parser.add_argument('--stop_val', type=str, default='val_f1_score', choices=['val_f1_score', 'val_auc', 'val_acc'],
+                        help='Which metric to use for early stopping')  # TODO
+    parser.add_argument('--folds', type=int, default=5, help='KFolds for validation')
+    parser.add_argument('--use_time', action='store_true', help='Use action delta as input')
+    parser.add_argument('--label', type=str, choices=['au', 'af', 'auf'], default='au', help='Type of label to use')
+    parser.add_argument('--only_solo', action='store_true', help='Ignore sessions with multiple searches')
+
+    parser.add_argument('--normalize_coords', action='store_true', help='normalize coordinates')  # TODO
+
+    parser.add_argument('--no_augment', action='store_true', help='Disable augmentation')
+    # TODO different augmentation
+    # TODO self-attention
+
+    parser.add_argument('--no_undersample', action='store_true', help='Disable undersampling')
+    parser.add_argument('--dropout', type=float, default=0.2, help='Dropout rate')
+    parser.add_argument('--dropout_only_last', action='store_true', help='Only apply dropout at the last layer')
+    parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
+    parser.add_argument('--optimizer', type=str, choices=['Adam', 'SDG', 'RMSprop', 'AdaDelta', 'AdaGrad'],
+                        default='Adam', help='Learning rate')  # TODO
+
+    # Execution arguments
+    parser.add_argument('-v', '--verbose', action="store_true", help="Print everything")
+    parser.add_argument('--seed', type=int, default=123, help="Base seed for the different simulation runs")
+    parser.add_argument('--file_desc', type=str, default="", help="name of files for this run")
+    parser.add_argument('mode', type=str, default="model", choices=["model", "evaluate"],
+                        help="Either find the best `model` based on validation data, or `evaluate` given model on "
+                             "test data")  # TODO
+
+    return parser
 
 
-VERBOSE = True
+if __name__ == '__main__':
+    parser = setup_arguments()
+    args = parser.parse_args()
+    # model_info = describe_arguments(args)
 
-train_data_last = extract_data(data_filtered_last, users_tasks, user_info)
-train_data_solo = extract_data(data_filtered_solo, users_tasks, user_info)
+    from data_provider import read_csv_logs, read_kge_log, filter_data_frames, filter_by_user_info, get_solo_only, \
+        get_data_last_only, map_user_tasks, extract_data
+    from training import train_model
 
-train_data_km_last = extract_data(data_nc_with_km_sr_last_filtered, users_tasks, user_info)
-train_data_km_solo = extract_data(data_nc_with_km_sr_solo_filtered, users_tasks, user_info)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
 
-# mouse_moves, mouse_moves_time, au_labels, af_labels, auf_labels = extract_data(data_filtered_last)
+    user_info = read_kge_log()
+    data_frames = read_csv_logs(user_info)
+    data_nc_with_km_sr, data_nc_without_km_sr = filter_data_frames(data_frames)
 
-pre_train_time = time.time()
+    users_tasks = map_user_tasks(data_frames, user_info)
 
-UNITS = 50
-PATIENCE = 1
-FOLD = 5
+    pre_train_time = time.time()
 
-# Baseline
-# ACC: 71%, Prec: 55%, Recall: 71%, F1: 62%, AUC: 50%
-# train_model(train_data_km_last[0], train_data_km_last[2],
-#             "baseline-no-time", PATIENCE, FOLD, units=UNITS, undersample=False, augment_train=False)
+    # Baseline
+    # ACC: 71%, Prec: 55%, Recall: 71%, F1: 62%, AUC: 50%
+    # train_model(train_data_km_last[0], train_data_km_last[2],
+    #             "baseline-no-time", PATIENCE, FOLD, units=UNITS, undersample=False, augment_train=False)
 
-# augment only training data: still very few 0s in test data
-# ACC: 0.74
-# Precision: 74.02%
-# Recall: 74.00%
-# F-measure: 72.28%
-# AUC: 61.33%
-# 4th: less augmentation
-# ACC: 0.73
-# Precision: 75.36%
-# Recall: 73.00%
-# F-measure: 73.54%
-# AUC: 67.33%
-#
-train_model(train_data_km_last[0], train_data_km_last[2],
-            "no-time-attention", PATIENCE, FOLD, units=UNITS, undersample=True, augment_train=True)
-train_model(train_data_km_last[0], train_data_km_last[2],
-            "no-time-attention", PATIENCE, 1, units=UNITS, undersample=True, augment_train=True)
+    if args.only_solo:
+        data_nc_with_km_sr_solo = get_solo_only(data_nc_with_km_sr)
+        data_nc_with_km_sr_solo_filtered = filter_by_user_info(user_info, data_nc_with_km_sr_solo, users_tasks)
+        train_data_km_solo = extract_data(data_nc_with_km_sr_solo_filtered, users_tasks, user_info)
+        data = train_data_km_solo
+    else:
+        data_nc_with_km_sr_last = get_data_last_only(data_nc_with_km_sr)
+        data_nc_with_km_sr_last_filtered = filter_by_user_info(user_info, data_nc_with_km_sr_last, users_tasks)
+        train_data_km_last = extract_data(data_nc_with_km_sr_last_filtered, users_tasks, user_info)
+        data = train_data_km_last
 
-# different augmentation inside (80% train)
-# ACC: 0.72
-# Precision: 70.16%
-# Recall: 72.00%
-# F-measure: 70.52%
-# AUC: 61.33%
+    if args.use_time:
+        x = data[1]
+    else:
+        x = data[0]
 
-# 70% train
-# ACC: 0.65
-# Precision: 69.49%
-# Recall: 64.67%
-# F-measure: 66.20%
-# AUC: 61.59%
+    if args.label == 'af':
+        y = data[3]
+    elif args.label == 'auf':
+        y = data[4]
+    else:
+        y = data[2]
 
-# 90% train
-# ACC: 0.64
-# Precision: 71.94%
-# Recall: 64.00%
-# F-measure: 64.46%
-# AUC: 64.76%
-# train_model(train_data_km_last[0], train_data_km_last[2],
-#             "no-time-attention", PATIENCE, FOLD, units=UNITS, undersample=True, augment_train=True)
+    if args.mode == 'model':
+        train_model(args, x, y, args.file_desc, args.patience, args.fold, units=args.units,
+                    undersample=args.no_undersample is False, augment_train=args.no_augment is False)
+    else:
+        print("TODO")
 
-# augment 50% of 0s before splitting, and training data in full
-# ACC: 0.82
-# Precision: 82.84%
-# Recall: 81.76%
-# F-measure: 81.83%
-# AUC: 80.61%
-
-# ACC: 0.81
-# Precision: 81.54%
-# Recall: 80.59%
-# F-measure: 80.73%
-# AUC: 79.70%
-
-# x, y = train_data_km_last[0], train_data_km_last[2]
-# middle_point = int(len(x)/2)
-# x_n, y_n = augment_coord(x[:middle_point], y[:middle_point], cutoff=False, varycoord=False, varycutoff=True,
-#                      only0=True, varycount=1, cutoff_end=False, cutoff_list=[4])
-#
-# x = np.concatenate([x, x_n])
-# y = np.concatenate([y, y_n])
-#
-# train_model(x, y,
-#             "no-time-attention", PATIENCE, FOLD, units=UNITS, undersample=True, augment_train=True)
-
-# augment full data set, only 0s?
-# ACC: 0.73
-# Precision: 74.80%
-# Recall: 73.10%
-# F-measure: 72.51%
-# AUC: 72.67%
-# x, y = augment_coord(train_data_km_last[0], train_data_km_last[2], cutoff=False, varycoord=False, varycutoff=True,
-#                      only0=True)
-# train_model(x, y, "no-time-attention", PATIENCE, FOLD, units=UNITS, undersample=True, augment_train=False)
-
-# augment full data set, 0s, 1s separately; more augmentation
-# too suspicious
-# ACC: 0.93
-# Precision: 93.01%
-# Recall: 92.93%
-# F-measure: 92.92%
-# AUC: 92.93%
-# x, y = augment_coord(train_data_km_last[0], train_data_km_last[2], cutoff=False, varycoord=False, varycutoff=True,
-#                      only1=True, varycount=1, cutoff_list=[5, 10], cutoff_limit=5)
-# x, y = augment_coord(x, y, cutoff=False, varycoord=False, varycutoff=True,
-#                      only0=True, cutoff_list=[2, 3, 4], cutoff_limit=2.5, varycount=3)
-# train_model(x, y, "no-time-attention", PATIENCE, FOLD, units=UNITS, undersample=True, augment_train=False)
-
-# augment full data set: too suspicious
-# ACC: 0.96
-# Precision: 95.74%
-# Recall: 95.60%
-# F-measure: 95.59%
-# AUC: 95.61%
-# x, y = augment_coord(train_data_km_last[0], train_data_km_last[2], cutoff=False, varycoord=False, varycutoff=True,
-#                      only0=False)
-# train_model(x, y, "no-time-attention", PATIENCE, FOLD, units=UNITS, undersample=True, augment_train=False)
-
-
-print("Training time: %.2f" % ((time.time()-pre_train_time)/60))
+    print("Training time: %.2f" % ((time.time() - pre_train_time) / 60))
