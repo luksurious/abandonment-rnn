@@ -36,7 +36,7 @@ class FBetaMetricCallback(Callback):
 
         logs["val_f1_score"] = _val_fbeta
 
-        print("- val_f1_score: {:.4f}".format(_val_fbeta))
+        # print("- val_f1_score: {:.4f}".format(_val_fbeta))
         return
 
     def on_train_end(self, logs=None):

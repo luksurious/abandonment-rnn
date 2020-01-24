@@ -232,16 +232,13 @@ def filter_by_user_info(user_info, data_frames, users_tasks):
 
 
 # extract data for model learning
-def extract_data(data_frames, users_tasks, user_info):
+def extract_data(data_frames, users_tasks, user_info, max_len=50, min_len=5):
     mouse_moves = []
     mouse_moves_time = []
 
     attend_useful = []
     attend_faster = []
     attend_useful_faster = []
-
-    max_len = 50
-    min_len = 5
 
     for idx, df in enumerate(data_frames):
         pos = df[df["event"] == "mousemove"][["xpos", "ypos"]]

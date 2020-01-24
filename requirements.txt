@@ -1,3 +1,4 @@
+termtables
 pandas
 imblearn
 tensorflow
