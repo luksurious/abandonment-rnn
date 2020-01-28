@@ -252,7 +252,8 @@ def extract_data(data_frames, users_tasks, user_info, max_len=50, min_len=5):
         time_diff = [times[i + 1] - times[i] for i in range(len(times) - 1)]
 
         # for last move, use diff with last? or 0?
-        time_diff.append(df["timestamp"].values[-1] - times[-1])
+        # time_diff.append(df["timestamp"].values[-1] - times[-1])
+        time_diff.append(np.array([0]))
 
         pos_time = np.concatenate([pos, time_diff], axis=1)
 

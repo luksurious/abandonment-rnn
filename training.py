@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 
 from fbeta import FBetaMetricCallback
 
@@ -33,6 +34,9 @@ from mouse_augment import augment_coord
 
 def train_model(args, x, y, prefix, patience=3, folds=10, undersample=False, units=50, augment_train=True,
                 is_eval=False, repeated=False, optimizing=False):
+
+    np.random.seed(args.seed)
+    random.seed(args.seed)
     if repeated is False:
         tf.random.set_seed(args.seed)
 
@@ -60,7 +64,10 @@ def train_model(args, x, y, prefix, patience=3, folds=10, undersample=False, uni
 
         for index, (train_index, val_index) in enumerate(kf.split(x_train, y_train)):
             if optimizing is False:
-                print("\nSplit %d..." % index)
+                if args.verbose:
+                    print("\nSplit %d..." % index)
+                else:
+                    print("Split %d..." % index)
 
             if is_eval is False:
                 x_train_fold, x_val = x_train[train_index], x_train[val_index]
@@ -74,7 +81,7 @@ def train_model(args, x, y, prefix, patience=3, folds=10, undersample=False, uni
                                                                             stratify=y_train_fold,
                                                                             random_state=args.seed)
 
-            if optimizing is False:
+            if optimizing is False and args.verbose:
                 print("Train: %d data points, 0: %d, 1: %d" % (len(x_train_fold),
                                                                len(y_train_fold) - np.count_nonzero(y_train_fold),
                                                                np.count_nonzero(y_train_fold)))
@@ -84,7 +91,7 @@ def train_model(args, x, y, prefix, patience=3, folds=10, undersample=False, uni
             x_train_fold, y_train_fold = postsplit_resampling(args, augment_train, undersample, x_test, x_train_fold,
                                                               y_train_fold)
 
-            if optimizing is False:
+            if optimizing is False and args.verbose:
                 print("After resampling: %d data points, 0: %d, 1: %d"
                       % (len(x_train_fold), len(y_train_fold) - np.count_nonzero(y_train_fold),
                          np.count_nonzero(y_train_fold)))
@@ -125,19 +132,19 @@ def train_model(args, x, y, prefix, patience=3, folds=10, undersample=False, uni
                             folded_scores, 0, prefix, patience, units)
         histories.append(history)
 
+    folded_scores = np.array(folded_scores)
     if optimizing is False:
-        folded_scores = np.array(folded_scores)
         print('\n\nAverage stats:')
         print(tt.to_string([
             ["Mean"] + ["%.2f" % (item*100)
-                        for item in [np.mean(folded_scores[:, i]) for i in range(4)]],
+                        for item in [np.mean(folded_scores[:, i]) for i in range(5)]],
 
             ["95% CI"] + ["+- %.2f" % (item*100)
                           for item in [np.mean(folded_scores[:, i]) -
                                        st.t.interval(0.95, len(folded_scores[:, i]) - 1,
                                                      loc=np.mean(folded_scores[:, i]),
-                                                     scale=st.sem(folded_scores[:, i]))[0] for i in range(4)]],
-        ], ["", "Precision", "Recall", "F1-Score", "AUC ROC"], alignment="lrrrr"))
+                                                     scale=st.sem(folded_scores[:, i]))[0] for i in range(5)]],
+        ], ["", "Loss", "Precision", "Recall", "F1-Score", "AUC ROC"], alignment="lrrrrr"))
 
         print(folded_scores)
 
@@ -145,28 +152,28 @@ def train_model(args, x, y, prefix, patience=3, folds=10, undersample=False, uni
 
     return folded_scores
 
+
 def postsplit_resampling(args, augment_train, undersample, x_test, x_train, y_train):
     if augment_train:
         x_train, y_train = augment_coord(x_train, y_train, cutoff=True, varycoord=True, varycutoff=False,
                                          cutoff_list=[2, 4], varycount=3, cutoff_end=True, cutoff_limit=5
                                          )
 
-    if undersample:
+    if args.oversample != '':
+        if args.oversample == 'smote':
+            ros = SMOTE(random_state=args.seed)
+        elif args.oversample == 'adasyn':
+            ros = ADASYN(random_state=args.seed)
+        else:
+            ros = RandomOverSampler(random_state=args.seed)
+        x_train, y_train = ros.fit_resample(x_train.reshape(x_train.shape[0], -1), y_train)
+        x_train = x_train.reshape(x_train.shape[0], x_test.shape[1], -1)
+    elif undersample:
         ros = RandomUnderSampler(random_state=args.seed)
         x_train, y_train = ros.fit_resample(x_train.reshape(x_train.shape[0], -1), y_train)
         x_train = x_train.reshape(x_train.shape[0], x_test.shape[1], -1)
 
     return x_train, y_train
-
-
-def presplit_resampling(args, augment_train, undersample, x, y):
-    if undersample and not augment_train:
-        ros = RandomUnderSampler(random_state=args.seed)
-        x_resampled, y_resampled = ros.fit_resample(x.reshape(x.shape[0], -1), y)
-        x_resampled = x_resampled.reshape(x_resampled.shape[0], x.shape[1], -1)
-    else:
-        x_resampled, y_resampled = x, y
-    return x_resampled, y_resampled
 
 
 def run_train(args, x_train, y_train, x_val, y_val, x_test, y_test, folded_scores, index, prefix, patience, units):
@@ -183,7 +190,8 @@ def run_train(args, x_train, y_train, x_val, y_val, x_test, y_test, folded_score
                                                       y_train)
 
     # Train the model.
-    model = create_model_template(args.layers, units, x_train[0].shape, args.attention_first, args.attention_middle)
+    model = create_model_template(args.layers, units, x_train[0].shape, args.attention_first, args.attention_middle,
+                                  args.lr, args.optimizer, args.dropout, args.dropout_only_last)
     # print(model.summary())
     history = model.fit(
         x_train,
@@ -197,7 +205,7 @@ def run_train(args, x_train, y_train, x_val, y_val, x_test, y_test, folded_score
     )
 
     # Evaluate the model.
-    # loss, acc, _, _, _ = model.evaluate(x_test, y_test, verbose=args.verbose)
+    loss, acc, _, _, _ = model.evaluate(x_test, y_test, verbose=args.verbose)
 
     # model = load_model('mouse_logs/best.h5')
 
@@ -220,7 +228,7 @@ def run_train(args, x_train, y_train, x_val, y_val, x_test, y_test, folded_score
     # folded_scores[index, 4] = auc
 
     folded_scores.append([
-        # acc,
+        loss,
         precision,
         recall,
         fmeasure,
@@ -228,7 +236,7 @@ def run_train(args, x_train, y_train, x_val, y_val, x_test, y_test, folded_score
     ])
 
     # Save the model.
-    save_model(model, '{}.h5'.format("models/mouse-aband-%s_%d" % (prefix, index)))
+    # save_model(model, '{}.h5'.format("models/mouse-aband-%s_%d" % (prefix, index)))
     # print(y_pred)
 
     return history

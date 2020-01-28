@@ -22,12 +22,17 @@ def create_model_template(layers: int, units, shape, use_attention_first=False, 
 
     if not isinstance(units, list):
         units = [units] * layers
+    elif len(units) < layers:
+        units = [units[0]] * layers
 
     model.add(Bidirectional(LSTM(units[0], return_sequences=layers > 1 or use_attention_first), input_shape=shape))
     # model.add(Bidirectional(tfa.rnn.cell.LayerNormLSTMCell(units[0], return_sequences=layers > 1), input_shape=shape))
 
     if use_attention_first:
-        model.add(SeqSelfAttention())
+        if layers > 1:
+            model.add(SeqSelfAttention())
+        else:
+            model.add(SeqWeightedAttention())
 
     for i in range(1, layers):
         if use_attention_middle:
