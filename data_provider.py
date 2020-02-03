@@ -97,6 +97,7 @@ def read_csv_logs(user_info):
                 continue
 
             url = mydoc.getElementsByTagName('url')[0].firstChild.data
+            viewport = mydoc.getElementsByTagName('window')[0].firstChild.data
 
             if "search.yahoo.com" not in url:
                 continue
@@ -107,6 +108,7 @@ def read_csv_logs(user_info):
             df["module_vis"] = task_data[3]
             df["file"] = file_id
             df["url"] = url
+            df["viewport"] = viewport
             data_frames.append(df)
         except Exception as e:
             print(f"\nError in {file}: {e}")
@@ -232,7 +234,8 @@ def filter_by_user_info(user_info, data_frames, users_tasks):
 
 
 # extract data for model learning
-def extract_data(data_frames, users_tasks, user_info, max_len=50, min_len=5):
+def extract_data(data_frames, users_tasks, user_info, max_len=50, min_len=5, normalize_viewport=False,
+                 normalize_1=False, reset_origin=False, normalize_time=False):
     mouse_moves = []
     mouse_moves_time = []
 
@@ -252,16 +255,34 @@ def extract_data(data_frames, users_tasks, user_info, max_len=50, min_len=5):
         time_diff = [times[i + 1] - times[i] for i in range(len(times) - 1)]
 
         # for last move, use diff with last? or 0?
-        # time_diff.append(df["timestamp"].values[-1] - times[-1])
-        time_diff.append(np.array([0]))
+        time_diff.append(df["timestamp"].values[-1] - times[-1])
+        # time_diff.append(np.array([0]))
+
+        if reset_origin:
+            pos[:, 0] = pos[:, 0] - pos[0, 0]
+            pos[:, 1] = pos[:, 1] - pos[0, 1]
+
+        viewport = df["viewport"][0].split("x")
+        if normalize_viewport:
+            pos[:, 0] = pos[:, 0] / int(viewport[0]) * 1280
+            # pos[:, 1] = pos[:, 1] / viewport[1] * 1024
+        elif normalize_1:
+            pos = np.array(pos, dtype=float)
+            pos[:, 0] = pos[:, 0] / int(viewport[0])
+            pos[:, 1] = pos[:, 1] / int(viewport[1])
+
+        if normalize_time:
+            time_diff = np.array(time_diff, dtype=float)
+            time_diff /= 150  # normalize per event check
 
         pos_time = np.concatenate([pos, time_diff], axis=1)
 
-        # test cutting off mouse moves
         if len(pos) > max_len:
             # print("Cutting off %d" % idx)
             pos = pos[-max_len:]
             pos_time = pos_time[-max_len:]
+
+
 
         task_id = df["user"].values[0] + df["query"].values[0] + df["session"].values[0]
 
