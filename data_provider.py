@@ -7,10 +7,12 @@ import re
 import json
 from urllib.parse import unquote
 import pickle
+from scipy.spatial import distance
 
 from keras_preprocessing.sequence import pad_sequences
 
 PATH = ''
+VERBOSE = False
 
 
 def read_kge_log():
@@ -134,13 +136,13 @@ def filter_data_frames(data_frames):
     data_nc_without_km = [df for df in data_no_clicks if df["module_vis"].values[0] == '0']
 
     print("Frames without clicks with KM: %d" % len(data_nc_with_km))
-    print("Frames without clicks without KM: %d" % len(data_nc_without_km))
+    # print("Frames without clicks without KM: %d" % len(data_nc_without_km))
 
     data_nc_with_km_sr = [df for df in data_nc_with_km if "search.yahoo.com" in df["url"].values[0]]
     data_nc_without_km_sr = [df for df in data_nc_without_km if "search.yahoo.com" in df["url"].values[0]]
 
-    print("Frames without clicks with KM on search page: %d" % len(data_nc_with_km_sr))
-    print("Frames without clicks without KM on search page: %d" % len(data_nc_without_km_sr))
+    # print("Frames without clicks with KM on search page: %d" % len(data_nc_with_km_sr))
+    # print("Frames without clicks without KM on search page: %d" % len(data_nc_without_km_sr))
 
     return data_nc_with_km_sr, data_nc_without_km_sr
 
@@ -224,7 +226,8 @@ def filter_by_user_info(user_info, data_frames, users_tasks):
 
         if user_row["URL"] not in unquote(df["url"][0]):
             user_info_filter[users_tasks[task_id]] = False
-            print("Mismatch in URL: %s vs %s (%d)" % (user_row["URL"], unquote(df["url"][0]), idx))
+            if VERBOSE:
+                print("Mismatch in URL: %s vs %s (%d)" % (user_row["URL"], unquote(df["url"][0]), idx))
             continue
 
         data_frames_filtered.append(df)
@@ -255,6 +258,13 @@ def extract_data(data_frames, users_tasks, user_info, max_len=50, min_len=5, nor
         time_diff = [times[i + 1] - times[i] for i in range(len(times) - 1)]
 
         # for last move, use diff with last? or 0?
+        # last_mouse_idx = df[df["event"] == "mousemove"]["timestamp"].index.values[-1]
+        # if len(df["timestamp"]) > last_mouse_idx+1:
+        #     next_time = df["timestamp"][last_mouse_idx+1]
+        # else:
+        #     print("Mouse move last event: %d" % idx)
+        #     next_time = df["timestamp"][last_mouse_idx]
+        # time_diff.append(next_time - times[-1])
         time_diff.append(df["timestamp"].values[-1] - times[-1])
         # time_diff.append(np.array([0]))
 
@@ -315,4 +325,27 @@ def extract_data(data_frames, users_tasks, user_info, max_len=50, min_len=5, nor
     return (pad_sequences(np.array(mouse_moves)), pad_sequences(np.array(mouse_moves_time)),
             np.array(attend_useful, dtype=np.int), np.array(attend_faster, dtype=np.int),
             np.array(attend_useful_faster, dtype=np.int))
+
+
+def calc_velocity(mouse_moves_time):
+    velocities = []
+
+    for item in mouse_moves_time:
+        velocity_seq = []
+        for idx, (x, y, time_diff) in enumerate(item):
+            if idx == len(item)-1:
+                velocity_seq.append(0)
+            elif x == y == 0:
+                velocity_seq.append(0)
+                # velocity_seq.append(-1)
+            else:
+                next_x, next_y, _ = item[idx+1]
+
+                item_dist = distance.euclidean([x, y], [next_x, next_y])
+                velocity = item_dist / time_diff
+                velocity_seq.append(velocity)
+
+        velocities.append(velocity_seq)
+
+    return np.array(velocities).reshape(-1, len(item), 1)
 
