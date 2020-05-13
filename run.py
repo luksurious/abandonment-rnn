@@ -21,6 +21,8 @@ def setup_arguments():
     parser.add_argument('--folds', type=int, default=5, help='KFolds for validation')
     parser.add_argument('--use_time', action='store_true', help='Use action delta as input')
     parser.add_argument('--use_speed', action='store_true', help='Use action delta as input')
+    parser.add_argument('--use_distances', action='store_true', help='Use action delta as input')
+    parser.add_argument('--use_log_reg', action='store_true', help='Use action delta as input')
     parser.add_argument('--no_coords', action='store_true', help='Use action delta as input')
     parser.add_argument('--label', type=str, choices=['au', 'af', 'auf'], default='au', help='Type of label to use')
     parser.add_argument('--only_solo', action='store_true', help='Ignore sessions with multiple searches')
@@ -81,8 +83,8 @@ if __name__ == '__main__':
     # model_info = describe_arguments(args)
 
     from data_provider import read_csv_logs, read_kge_log, filter_data_frames, filter_by_user_info, get_solo_only, \
-    get_data_last_only, map_user_tasks, extract_data, calc_velocity
-    from training import train_model
+        get_data_last_only, map_user_tasks, extract_data, calc_velocity, extract_simple_features, extract_data_distance
+    from training import train_model, train_simple_model
 
     np.random.seed(args.seed)
     random.seed(args.seed)
@@ -94,16 +96,17 @@ if __name__ == '__main__':
     users_tasks = map_user_tasks(data_frames, user_info)
 
     pre_train_time = time.time()
-
     if args.only_solo:
         data_nc_with_km_sr_solo = get_solo_only(data_nc_with_km_sr)
         data_nc_with_km_sr_solo_filtered = filter_by_user_info(user_info, data_nc_with_km_sr_solo, users_tasks)
+        dfs = data_nc_with_km_sr_solo_filtered
         train_data_km_solo = extract_data(data_nc_with_km_sr_solo_filtered, users_tasks, user_info,
                                           args.max_events, args.min_events, args.standardize, args.normalize,
                                           args.reset_origin, args.norm_time)
         data = train_data_km_solo
     elif args.all_aband:
         data_nc_with_km_sr_filtered = filter_by_user_info(user_info, data_nc_with_km_sr, users_tasks)
+        dfs = data_nc_with_km_sr_filtered
         train_data_km = extract_data(data_nc_with_km_sr_filtered, users_tasks, user_info,
                                       args.max_events, args.min_events, args.standardize, args.normalize,
                                       args.reset_origin, args.norm_time)
@@ -111,63 +114,73 @@ if __name__ == '__main__':
     else:
         data_nc_with_km_sr_last = get_data_last_only(data_nc_with_km_sr)
         data_nc_with_km_sr_last_filtered = filter_by_user_info(user_info, data_nc_with_km_sr_last, users_tasks)
+        dfs = data_nc_with_km_sr_last_filtered
         train_data_km_last = extract_data(data_nc_with_km_sr_last_filtered, users_tasks, user_info,
                                           args.max_events, args.min_events, args.standardize, args.normalize,
                                           args.reset_origin, args.norm_time)
         data = train_data_km_last
 
-    if args.use_time:
-        x = data[1]
+    if args.use_log_reg:
+        X, y = extract_simple_features(args, dfs, users_tasks, user_info)
+        train_simple_model(args, X, y)
     else:
-        x = data[0]
 
-    if args.use_speed:
-        velocities = calc_velocity(data[1])
-        x = np.concatenate([x, velocities], axis=2)
+        if args.use_time:
+            x = data[1]
+        else:
+            x = data[0]
 
-    if args.no_coords:
-        x = x[:,2:]
+        if args.use_speed:
+            velocities = calc_velocity(data[1])
+            x = np.concatenate([x, velocities], axis=2)
 
-    if args.label == 'af':
-        y = data[3]
-    elif args.label == 'auf':
-        y = data[4]
-    else:
-        y = data[2]
+        if args.use_distances:
+            distances = extract_data_distance(dfs, users_tasks, user_info, args.max_events, args.min_events)
+            x = np.concatenate([x, distances], axis=2)
 
-    print("Data points x: %d" % len(x))
+        if args.no_coords:
+            x = x[:,2:]
 
-    if args.optuna is True:
+        if args.label == 'af':
+            y = data[3]
+        elif args.label == 'auf':
+            y = data[4]
+        else:
+            y = data[2]
 
-        def optuna_objective(trial):
-            # args.lr = trial.suggest_loguniform('lr', 1e-4, 1e-2)
-            # args.optimizer = trial.suggest_categorical('optimizer', ['Adam', 'SDG', 'RMSprop', 'Nadam'])
-            args.batch_size = trial.suggest_categorical('batch_size', [4, 8, 16])
+        print("Data points x: %d" % len(x))
 
-            args.layers = trial.suggest_categorical('layers', [1, 2, 3])
-            args.units = trial.suggest_categorical('units', [25, 50, 100])
-            args.dropout = trial.suggest_categorical('dropout', [0.1, 0.2, 0.5])
-            # args.dropout_only_last = trial.suggest_categorical('dropout_only_last', [True, False])
-            args.attention_first = trial.suggest_categorical('attention_first', [True, False])
-            # args.attention_middle = trial.suggest_categorical('attention_middle', [True, False])
+        if args.optuna is True:
 
-            test_results, val_results = train_model(args, x, y, args.file_desc, args.patience, args.folds,
-                                                    units=args.units,
-                                                    undersample=args.no_undersample is False,
-                                                    augment_train=args.no_augment is False,
-                                                    optimizing=True)
+            def optuna_objective(trial):
+                # args.lr = trial.suggest_loguniform('lr', 1e-4, 1e-2)
+                # args.optimizer = trial.suggest_categorical('optimizer', ['Adam', 'SDG', 'RMSprop', 'Nadam'])
+                args.batch_size = trial.suggest_categorical('batch_size', [4, 8, 16])
 
-            return np.mean(val_results[:, 3])
+                args.layers = trial.suggest_categorical('layers', [1, 2, 3])
+                args.units = trial.suggest_categorical('units', [25, 50, 100])
+                args.dropout = trial.suggest_categorical('dropout', [0.1, 0.2, 0.5])
+                # args.dropout_only_last = trial.suggest_categorical('dropout_only_last', [True, False])
+                args.attention_first = trial.suggest_categorical('attention_first', [True, False])
+                # args.attention_middle = trial.suggest_categorical('attention_middle', [True, False])
+
+                test_results, val_results = train_model(args, x, y, args.file_desc, args.patience, args.folds,
+                                                        units=args.units,
+                                                        undersample=args.no_undersample is False,
+                                                        augment_train=args.no_augment is False,
+                                                        optimizing=True)
+
+                return np.mean(val_results[:, 3])
 
 
-        study = optuna.create_study(direction='maximize', study_name='mouse_model_opt',
-                                    storage='sqlite:///mouse_model_opt.db', load_if_exists=True)
-        study.optimize(optuna_objective, n_trials=args.opt_trials)
+            study = optuna.create_study(direction='maximize', study_name='mouse_model_opt',
+                                        storage='sqlite:///mouse_model_opt.db', load_if_exists=True)
+            study.optimize(optuna_objective, n_trials=args.opt_trials)
 
-        print(study.best_params)
+            print(study.best_params)
 
-    else:
-        train_model(args, x, y, args.file_desc, args.patience, args.folds, units=args.units,
-                    undersample=args.no_undersample is False, augment_train=args.no_augment is False)
+        else:
+            train_model(args, x, y, args.file_desc, args.patience, args.folds, units=args.units,
+                        undersample=args.no_undersample is False, augment_train=args.no_augment is False)
 
     print("Training time: %.2f" % ((time.time() - pre_train_time) / 60))

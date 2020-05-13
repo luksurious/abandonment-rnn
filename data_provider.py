@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import glob
 import pandas as pd
@@ -100,6 +101,7 @@ def read_csv_logs(user_info):
 
             url = mydoc.getElementsByTagName('url')[0].firstChild.data
             viewport = mydoc.getElementsByTagName('window')[0].firstChild.data
+            document = mydoc.getElementsByTagName('document')[0].firstChild.data
 
             if "search.yahoo.com" not in url:
                 continue
@@ -111,6 +113,7 @@ def read_csv_logs(user_info):
             df["file"] = file_id
             df["url"] = url
             df["viewport"] = viewport
+            df["document"] = document
             data_frames.append(df)
         except Exception as e:
             print(f"\nError in {file}: {e}")
@@ -325,6 +328,183 @@ def extract_data(data_frames, users_tasks, user_info, max_len=50, min_len=5, nor
     return (pad_sequences(np.array(mouse_moves)), pad_sequences(np.array(mouse_moves_time)),
             np.array(attend_useful, dtype=np.int), np.array(attend_faster, dtype=np.int),
             np.array(attend_useful_faster, dtype=np.int))
+
+
+def extract_data_distance(data_frames, users_tasks, user_info, max_len=50, min_len=5):
+    distances = []
+
+    for idx, df in enumerate(data_frames):
+        pos = df[df["event"] == "mousemove"][["xpos", "ypos"]]
+        pos = pos.values
+
+        if len(pos) < min_len:
+            print("Skipping %d..." % idx)
+            continue
+
+        extras = df[df["event"] == "mousemove"][["extras"]].values.ravel().tolist()
+        extras = [json.loads(extra) for extra in extras]
+
+        item_distances = [item['middle'] for item in extras if 'middle' in item]
+
+        if len(item_distances) > max_len:
+            item_distances = item_distances[-max_len:]
+
+        task_id = df["user"].values[0] + df["query"].values[0] + df["session"].values[0]
+
+        if df["module_vis"].values[0] == '1':
+            user_row = user_info.iloc[users_tasks[task_id], :]
+
+            if user_row['moduleVisibility'] == 1:
+                noticed = user_row["moduleWasNoticed"]
+                useful = user_row["moduleWasUsefulBinary"]
+            else:
+                print("Error in df %d" % idx)
+                continue
+        else:
+            noticed = 0
+            useful = 0
+
+        if np.isnan(noticed) or np.isnan(useful):
+            print("NAN Error in df %d" % idx)
+            continue
+
+        distances.append(item_distances)
+
+    distances = pad_sequences(distances)
+    return distances.reshape(-1, len(distances[0]), 1)
+
+
+def extract_simple_features(args, data_frames, users_tasks, user_info):
+    features = []
+    labels = []
+
+    for idx, df in enumerate(data_frames):
+        # no of hovers
+        mousemove_rows = df[df["event"] == "mousemove"]
+        extras = mousemove_rows[["extras"]].values.ravel().tolist()
+        extras = [json.loads(extra) for extra in extras if extra != '{}']
+        hovered = np.count_nonzero([has_interaction(extra) for extra in extras])
+
+        # no of scrolls
+        scrolls = len(df[df["event"] == "scroll"])
+
+        pos = mousemove_rows[["xpos", "ypos"]].values
+        if len(pos) < args.min_events:
+            print("Skipping %d..." % idx)
+            continue
+
+        # scroll distance vertical
+        vert_range = np.max(pos[:,1]) - np.min(pos[:,1])
+
+        # scroll distance horizontal
+        hor_range = np.max(pos[:,0]) - np.min(pos[:,0])
+
+        # dwell time
+        timestamps = df["timestamp"].values
+        dwell_time = timestamps[-1] - timestamps[0]
+
+        # avg time offset
+        times = mousemove_rows[["timestamp"]].values
+        time_diff = [times[i + 1] - times[i] for i in range(len(times) - 1)]
+        avg_time_diff = np.average(time_diff)
+
+        # no of mouse moves
+        mousemove_count = len(mousemove_rows)
+
+        # traj length
+        traj_length = 0
+        prev_coord = pos[0]
+
+        for coord in pos[1:,]:
+            traj_length += distance.euclidean(prev_coord, coord)
+            prev_coord = coord
+
+        # vertical reach
+        document = df["document"][0].split("x")
+        max_reach_vert = np.max(pos[:,1]) / int(document[1])
+
+        # horizontal reach
+        max_reach_hor = np.max(pos[:,0]) / int(document[0])
+
+
+        task_id = df["user"].values[0] + df["query"].values[0] + df["session"].values[0]
+        user_row = user_info.iloc[users_tasks[task_id], :]
+
+        if df["module_vis"].values[0] == '1':
+
+            if user_row['moduleVisibility'] == 1:
+                noticed = user_row["moduleWasNoticed"]
+                useful = user_row["moduleWasUsefulBinary"]
+            else:
+                print("Error in df %d" % idx)
+                continue
+        else:
+            noticed = 0
+            useful = 0
+
+        if np.isnan(noticed) or np.isnan(useful):
+            print("NAN Error in df %d" % idx)
+            continue
+
+        features.append([hovered, scrolls, dwell_time, vert_range, hor_range, max_reach_hor, max_reach_vert,
+                         traj_length, avg_time_diff, mousemove_count])
+        labels.append(noticed and useful)
+
+    return np.array(features), np.array(labels)
+
+
+# Estimates whether user has interacted with the knowledge module.
+# This function was ported from rectangles.cpp
+# and takes as input 4 distances: the first 3 of which are related to 3 corners, the last one the middle
+def has_interaction(graph):
+    if not graph:
+        return False
+    dA, dB, dC, dX = graph['topLeft'], graph['topRight'], graph['bottomLeft'], graph['middle']
+    alpha = dA**2                                        # a^2 + b^2
+    beta  = dB**2 - alpha                                # x^2 + 2ax
+    gamma = dC**2 - alpha                                # y^2 - 2by
+    delta = 2 * dX**2 - (2 * alpha + (beta + gamma) / 2) #  ax - by
+    eps = 1e-7
+    ret = ''
+    if abs(beta) < eps and abs(gamma) < eps:
+        return 'INSIDE'
+
+    def solve_quadratic(a,b,c):
+        if abs(a) < eps:
+            return -c/b
+        x = b * b - 4 * a * c
+        if -eps * (abs(a) + abs(b) + abs(c)) < x and x <= 0:
+            x = 0
+        if x < 0:
+            return []
+        if abs(x) < eps:
+            return [ -b/(2 * a) ]
+        x = math.sqrt(x)
+        return [ (-b + x)/(2 * a), (-b - x)/(2 * a) ]
+
+    sol_y2 = solve_quadratic(
+        beta + gamma + 2 * delta + 4 * alpha,
+        8 * alpha * delta - 2 * beta * gamma - 4 * alpha * beta - 4 * alpha * gamma - 2 * gamma * gamma + 4 * delta * delta,
+        gamma**2 * (gamma + beta - 2 * delta)
+    )
+    sol_y = [ math.sqrt(y2) for y2 in sol_y2 if y2 > eps ]
+    if not sol_y:
+        return 'NO_INTERACTION' # Actually it's unclear how to handle this case.
+
+    for y in sol_y:
+        ax = delta + (y**2 - gamma) / 2
+        x2 = beta - 2 * ax
+        if x2 > eps:
+            x = math.sqrt(x2)
+            b = (y**2 - gamma) / (2 * y)
+            a = ax/x
+            inside = (-x <= a and a <= 0 and 0 <= b and b <= y)
+            r = 'INSIDE' if inside else 'OUTSIDE'
+            if ret == '':
+                ret = r
+            elif ret != r:
+                ret = 'NO_INTERACTION' # Actually it's unclear how to handle this case.
+    return ret if ret != -1 else 'NO_INTERACTION'
 
 
 def calc_velocity(mouse_moves_time):

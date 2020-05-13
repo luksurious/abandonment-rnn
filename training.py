@@ -348,3 +348,70 @@ def plot_history(histories, suffix):
     plt.savefig('models/model-loss_%s.png' % (suffix))
     plt.show()
     plt.clf()
+
+
+def train_simple_model(args, X, y):
+    from sklearn import ensemble, linear_model
+    import xgboost as xgb
+
+    np.random.seed(args.seed)
+    random.seed(args.seed)
+    tf.random.set_seed(args.seed)
+
+    # print(X)
+
+    folded_scores = []
+
+    kf = StratifiedKFold(n_splits=10, shuffle=True, random_state=args.seed)
+
+    for index, (train_index, test_index) in enumerate(kf.split(X, y)):
+        x_train, x_test = X[train_index], X[test_index]
+        y_train, y_test = y[train_index], y[test_index]
+
+        x_train, y_train = postsplit_resampling(args, False, not args.no_undersample, x_test, x_train, y_train)
+        x_train = x_train.reshape(-1, 10)
+
+        print_fold_info(args, index, False, x_test, x_train, x_test, y_test, y_train, y_test)
+
+        # clf = linear_model.LogisticRegression(random_state=args.seed)
+        # clf = ensemble.RandomForestClassifier(random_state=args.seed)
+        # clf = ensemble.GradientBoostingClassifier(random_state=args.seed)
+        # clf = ensemble.AdaBoostClassifier(random_state=args.seed)
+        clf = xgb.XGBClassifier(random_state=args.seed, objective='binary:hinge')
+        clf.fit(x_train, y_train)
+
+        # loss, acc, _, _, _ = clf.predict(x_test, y_test, verbose=args.verbose, batch_size=args.batch_size)
+        y_pred = clf.predict(x_test)
+        # y_pred = np.array([int(x[0] > args.threshold) for x in probs], dtype=np.int)
+
+        precision, recall, fmeasure, _ = precision_recall_fscore_support(y_test, y_pred, average='weighted')
+
+        auc = roc_auc_score(y_test, y_pred)
+
+        folded_scores.append([0, precision, recall, fmeasure, auc])
+
+        # kf = StratifiedKFold(5, shuffle=True, random_state=args.seed)
+        # iterator = kf.split(x_train, y_train)
+        #
+        # for train_index, val_index in iterator:
+        #     x_train_fold, x_val = x_train[train_index], x_train[val_index]
+        #     y_train_fold, y_val = y_train[train_index], y_train[val_index]
+
+    folded_scores = np.array(folded_scores)
+
+    print('\n\nTest data stats:')
+    print(tt.to_string([
+        ["Mean"] + ["%.2f" % (item * 100)
+                    for item in [np.mean(folded_scores[:, i]) for i in range(5)]],
+
+        ["95% CI"] + ["+- %.2f" % (item * 100)
+                      for item in [np.mean(folded_scores[:, i]) -
+                                   st.t.interval(0.95, len(folded_scores[:, i]) - 1,
+                                                 loc=np.mean(folded_scores[:, i]),
+                                                 scale=st.sem(folded_scores[:, i]))[0] for i in range(5)]],
+
+        ["SD"] + ["+- %.2f" % (item * 100)
+                  for item in [np.std(folded_scores[:, i]) for i in range(5)]],
+    ], ["", "Loss", "Precision", "Recall", "F1-Score", "AUC ROC"], alignment="lrrrrr"))
+
+    print(folded_scores)
