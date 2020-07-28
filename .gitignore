@@ -6,3 +6,5 @@ kge/
 *.json
 results.*
 experiments.md
+experiments/
+scripts/

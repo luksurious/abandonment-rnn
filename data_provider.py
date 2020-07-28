@@ -12,12 +12,12 @@ from scipy.spatial import distance
 
 from keras_preprocessing.sequence import pad_sequences
 
-PATH = ''
+PATH = 'kge/'
 VERBOSE = False
 
 
 def read_kge_log():
-    with open(PATH + "kge/kge.log", 'r') as f:
+    with open(PATH + "kge.log", 'r') as f:
         fo = io.StringIO()
         data = f.readlines()
         fo.writelines(line.replace('undefined', 'N/A')
@@ -56,7 +56,7 @@ def read_csv_logs(user_info):
 
     user_ids_set = set()
 
-    pattern = PATH + 'kge/cursorlogs/*.csv'
+    pattern = PATH + 'cursorlogs/*.csv'
     for file in glob.glob(pattern):
         print(".", end='')
 

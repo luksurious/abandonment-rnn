@@ -1,8 +1,10 @@
 termtables
 pandas
 imblearn
-tensorflow
-scikit-learn
+tensorflow~=2.1.0
+scikit-learn~=0.22.1
 matplotlib
-numpy
+numpy~=1.17.2
 xgboost
+optuna~=1.0.0
+scipy~=1.3.3

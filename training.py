@@ -24,14 +24,8 @@ from imblearn.over_sampling import RandomOverSampler, SMOTE, ADASYN
 from imblearn.under_sampling import RandomUnderSampler
 import tensorflow.keras as keras
 
-from models import create_model, create_model_template
+from models import create_model_template
 from mouse_augment import augment_coord
-
-
-# import tensorflow.compat.v1 as tf
-# config = tf.ConfigProto()
-# config.gpu_options.allow_growth = True
-# tf.Session(config=config)
 
 
 def train_model(args, x, y, prefix, patience=3, folds=10, undersample=False, units=50, augment_train=True,
@@ -111,7 +105,7 @@ def exec_folded_training(args, augment_train, folded_scores, folded_val_scores, 
         print("Split %d..." % index)
 
     kf = StratifiedKFold(5, shuffle=True, random_state=args.seed)
-    if args.no_nested or args.dummy:
+    if args.no_nested or args.all_bad or args.all_good:
         iterator = [next(kf.split(x_train, y_train))]
     else:
         iterator = kf.split(x_train, y_train)
@@ -245,8 +239,8 @@ def run_train(args, x_train, y_train, x_val, y_val, x_test, y_test, folded_score
 
     class_weights /= np.min(class_weights)
 
-    if args.dummy:
-        majority_class = 0  # np.argmin(class_weights)
+    if args.all_bad or args.all_good:
+        majority_class = 0 if args.all_bad else 1
         inp = keras.layers.Input(x_train[0].shape)
         out = keras.layers.Lambda(lambda x: [tf.ones((1,), dtype=tf.float32) * majority_class])(inp)
         model = keras.models.Model(inp, out)
@@ -294,7 +288,7 @@ def run_train(args, x_train, y_train, x_val, y_val, x_test, y_test, folded_score
 
 
 def evaluate_model(args, model, x_test, y_test):
-    if args.dummy:
+    if args.all_good or args.all_bad:
         loss, acc = model.evaluate(x_test, y_test, verbose=args.verbose, batch_size=args.batch_size)
         probs = model.predict(tf.cast(x_test, dtype=tf.float32), batch_size=args.batch_size)
         y_pred = np.array([int(x > args.threshold) for x in probs], dtype=np.int)
@@ -358,8 +352,6 @@ def train_simple_model(args, X, y):
     random.seed(args.seed)
     tf.random.set_seed(args.seed)
 
-    # print(X)
-
     folded_scores = []
 
     kf = StratifiedKFold(n_splits=10, shuffle=True, random_state=args.seed)
@@ -373,16 +365,18 @@ def train_simple_model(args, X, y):
 
         print_fold_info(args, index, False, x_test, x_train, x_test, y_test, y_train, y_test)
 
-        # clf = linear_model.LogisticRegression(random_state=args.seed)
-        # clf = ensemble.RandomForestClassifier(random_state=args.seed)
+        if args.use_classic == 'LogReg':
+            clf = linear_model.LogisticRegression(random_state=args.seed)
+        elif args.use_classic == 'RF':
+            clf = ensemble.RandomForestClassifier(random_state=args.seed)
         # clf = ensemble.GradientBoostingClassifier(random_state=args.seed)
         # clf = ensemble.AdaBoostClassifier(random_state=args.seed)
-        clf = xgb.XGBClassifier(random_state=args.seed, objective='binary:hinge')
+        elif args.use_classic == 'XGB':
+            clf = xgb.XGBClassifier(random_state=args.seed, objective='binary:hinge')
+
         clf.fit(x_train, y_train)
 
-        # loss, acc, _, _, _ = clf.predict(x_test, y_test, verbose=args.verbose, batch_size=args.batch_size)
         y_pred = clf.predict(x_test)
-        # y_pred = np.array([int(x[0] > args.threshold) for x in probs], dtype=np.int)
 
         precision, recall, fmeasure, _ = precision_recall_fscore_support(y_test, y_pred, average='weighted')
 
@@ -390,28 +384,86 @@ def train_simple_model(args, X, y):
 
         folded_scores.append([0, precision, recall, fmeasure, auc])
 
-        # kf = StratifiedKFold(5, shuffle=True, random_state=args.seed)
-        # iterator = kf.split(x_train, y_train)
-        #
-        # for train_index, val_index in iterator:
-        #     x_train_fold, x_val = x_train[train_index], x_train[val_index]
-        #     y_train_fold, y_val = y_train[train_index], y_train[val_index]
-
     folded_scores = np.array(folded_scores)
+
+    test_n = len(X)/10
 
     print('\n\nTest data stats:')
     print(tt.to_string([
-        ["Mean"] + ["%.2f" % (item * 100)
-                    for item in [np.mean(folded_scores[:, i]) for i in range(5)]],
+        ["Mean"] + ["%.2f" % item
+                    for item in [np.mean(folded_scores[:, i]) for i in range(1, 5)]],
 
-        ["95% CI"] + ["+- %.2f" % (item * 100)
-                      for item in [np.mean(folded_scores[:, i]) -
-                                   st.t.interval(0.95, len(folded_scores[:, i]) - 1,
-                                                 loc=np.mean(folded_scores[:, i]),
-                                                 scale=st.sem(folded_scores[:, i]))[0] for i in range(5)]],
+        ["95% CI (t-dist)"] + ["[%.2f, %.2f]" % (item[0], item[1])
+                               for item in [st.t.interval(0.95, len(folded_scores[:, i]) - 1,
+                                                          loc=np.mean(folded_scores[:, i]),
+                                                          scale=st.sem(folded_scores[:, i]))
+                                            for i in range(1, 5)]],
 
-        ["SD"] + ["+- %.2f" % (item * 100)
-                  for item in [np.std(folded_scores[:, i]) for i in range(5)]],
-    ], ["", "Loss", "Precision", "Recall", "F1-Score", "AUC ROC"], alignment="lrrrrr"))
+        ["95% CI (norm-dist)"] + ["[%.2f, %.2f]" % (item[0], item[1])
+                                  for item in [st.norm.interval(0.95, loc=np.mean(folded_scores[:, i]),
+                                                                scale=st.sem(folded_scores[:, i]))
+                                               for i in range(1, 5)]],
+
+        ["95% CI (wilson)"] + ["[%.2f, %.2f]" % (item[0], item[1])
+                               for item in [proportion_ci_wilson_cc(np.mean(folded_scores[:, i]),
+                                                                    nobs=len(folded_scores) * test_n,
+                                                                    alpha=0.05)
+                                            for i in range(1, 5)]],
+
+        ["95% CI (bootstrapped)"] + ["[%.2f, %.2f]" % (item[0], item[1])
+                                     for item in [bootstrap_ci(folded_scores[:, i], np.mean,
+                                                               alpha=0.95)
+                                                  for i in range(1, 5)]],
+
+        ["SD"] + ["+- %.2f" % item
+                  for item in [np.std(folded_scores[:, i]) for i in range(1, 5)]],
+    ], ["", "Precision", "Recall", "F1-Score", "AUC ROC"], alignment="lrrrr"))
 
     print(folded_scores)
+
+
+def bootstrap_ci(data_points, fun=np.mean, alpha=0.95, trials=1000):
+    simulations = []
+    sample_size = len(data_points)
+    for c in range(trials):
+        itersample = np.random.choice(data_points, size=sample_size, replace=True)
+        simulations.append(fun(itersample))
+
+    lower = np.quantile(simulations, (1-alpha)/2)
+    upper = np.quantile(simulations, alpha+((1-alpha)/2))
+
+    return lower, upper
+
+
+def proportion_ci_wilson_cc(proportion, nobs, alpha=0.05):
+    """
+    Adapted from https://stackoverflow.com/a/34278277/496209
+    :param proportion: p of the trials
+    :param nobs: Number of observations
+    :param alpha: Desired alpha. 0.05 --> 95% CI
+    :return: Tuple[lower, upper]
+    """
+    # get confidence limits for proportion
+    # using wilson score method w/ cont correction
+    # i.e. Method 4 in Newcombe [1];
+    # verified via Table 1
+    from scipy import stats
+    n = nobs
+    p = proportion
+    q = 1. - p
+
+    z = stats.norm.isf(alpha / 2.)
+    z2 = z ** 2
+
+    denom = 2 * (n + z2)
+    num = 2. * n * p + z2 - 1. - z * np.sqrt(z2 - 2 - 1. / n + 4 * p * (n * q + 1))
+
+    ci_l = num / denom
+    num = 2. * n * p + z2 + 1. + z * np.sqrt(z2 + 2 - 1. / n + 4 * p * (n * q - 1))
+    ci_u = num / denom
+
+    if p == 0:
+        ci_l = 0.
+    elif p == 1:
+        ci_u = 1.
+    return ci_l, ci_u

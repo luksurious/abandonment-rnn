@@ -22,13 +22,13 @@ def setup_arguments():
     parser.add_argument('--use_time', action='store_true', help='Use action delta as input')
     parser.add_argument('--use_speed', action='store_true', help='Use action delta as input')
     parser.add_argument('--use_distances', action='store_true', help='Use action delta as input')
-    parser.add_argument('--use_log_reg', action='store_true', help='Use action delta as input')
+    parser.add_argument('--use_classic', type=str, choices=['RF', 'XGB', 'LogReg', ''], default='')
     parser.add_argument('--no_coords', action='store_true', help='Use action delta as input')
     parser.add_argument('--label', type=str, choices=['au', 'af', 'auf'], default='au', help='Type of label to use')
     parser.add_argument('--only_solo', action='store_true', help='Ignore sessions with multiple searches')
     parser.add_argument('--all_aband', action='store_true', help='Ignore sessions with multiple searches')
     parser.add_argument('--max_events', type=int, default=50, help='Max number of last mouse movements to consider')
-    parser.add_argument('--min_events', type=int, default=5, help='Min number of mouse movements to consider')
+    parser.add_argument('--min_events', type=int, default=2, help='Min number of mouse movements to consider')
 
     parser.add_argument('--standardize', action='store_true', help='Disable augmentation')
     parser.add_argument('--normalize', action='store_true', help='normalize coordinates')
@@ -64,7 +64,8 @@ def setup_arguments():
 
     # Execution arguments
     parser.add_argument('-v', '--verbose', action="store_true", help="Print everything")
-    parser.add_argument('--dummy', action="store_true", help="Use a dummy model that only predicts the majority class")
+    parser.add_argument('--all_bad', action="store_true", help="Use a dummy model that only predicts bad abandonment")
+    parser.add_argument('--all_good', action="store_true", help="Use a dummy model that only predicts good abandonment")
     parser.add_argument('--optuna', action="store_true", help="Use optuna to optimize hyperparams")
     parser.add_argument('--opt_trials', type=int, default=50, help="Number of optuna trials")
     parser.add_argument('--seed', type=int, default=123, help="Base seed for the different simulation runs")
@@ -120,7 +121,7 @@ if __name__ == '__main__':
                                           args.reset_origin, args.norm_time)
         data = train_data_km_last
 
-    if args.use_log_reg:
+    if args.use_classic != '':
         X, y = extract_simple_features(args, dfs, users_tasks, user_info)
         train_simple_model(args, X, y)
     else:

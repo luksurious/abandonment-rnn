@@ -1,11 +1,9 @@
-from sklearn.metrics import precision_recall_fscore_support
-from tensorflow.keras.models import Sequential, save_model
+from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM, Bidirectional, Dropout, Embedding, TimeDistributed, GRU, \
     BatchNormalization
 from tensorflow.keras.optimizers import Adam, SGD, RMSprop, Adadelta, Adagrad, Adamax, Nadam
 from tensorflow.keras import metrics
-import tensorflow_addons as tfa
-from tensorflow import keras
+# import tensorflow_addons as tfa
 from keras_self_attention import SeqSelfAttention, SeqWeightedAttention
 
 
