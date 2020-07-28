@@ -1,6 +1,6 @@
 # Query Abandonment Prediction with Recurrent Neural Models of Mouse Cursor Movements
 
-Experiment code for the paper by [Lukas Brückner](https://github.com/luksurious/), [Ioannis Arapakis](https://iarapakis.github.io/), and [Luis A. Leiva](https://luis.leiva.name/web/)
+Experiment code for the [paper](https://doi.org/10.1145/3340531.3412126) by [Lukas Brückner](https://github.com/luksurious/), [Ioannis Arapakis](https://iarapakis.github.io/), and [Luis A. Leiva](https://luis.leiva.name/web/)
 
 ## Requirements
 
