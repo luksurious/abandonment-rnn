@@ -24,3 +24,17 @@ _Examples_:
 
 The data used is from [Predicting User Engagement with Direct Displays Using Mouse Cursor Information](https://dl.acm.org/doi/10.1145/2911451.2911505).
 Unfortunately, it is proprietary, so it cannot be shared in this repository.
+
+## Citation
+
+Please use the following Bibtex when citing this work.
+
+```
+@InProceedings{Bruckner20_abandonment,
+  author    = {Lukas Brückner and Ioannis Arapakis and Luis A. Leiva},
+  title     = {Query Abandonment Prediction with Deep Learning Models of Mouse Cursor Movements},
+  booktitle = {Proc. CIKM},
+  year      = {2020},
+  doi       = {10.1145/3340531.3412126},
+}
+```
