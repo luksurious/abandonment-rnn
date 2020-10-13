@@ -1,9 +1,9 @@
+import argparse
+import random
 import time
 import warnings
-import numpy as np
-import random
-import argparse
 
+import numpy as np
 import optuna
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -83,18 +83,17 @@ if __name__ == '__main__':
     args = parser.parse_args()
     # model_info = describe_arguments(args)
 
-    from data_provider import read_csv_logs, read_kge_log, filter_data_frames, filter_by_user_info, get_solo_only, \
-        get_data_last_only, map_user_tasks, extract_data, calc_velocity, extract_simple_features, extract_data_distance
+    from data_provider import filter_by_user_info, get_solo_only, \
+    get_data_last_only, map_user_tasks, extract_data, calc_velocity, extract_simple_features, extract_data_distance, \
+        load_data
     from training import train_model, train_simple_model
 
     np.random.seed(args.seed)
     random.seed(args.seed)
 
-    user_info = read_kge_log()
-    data_frames = read_csv_logs(user_info)
-    data_nc_with_km_sr, data_nc_without_km_sr = filter_data_frames(data_frames)
+    user_info, data_nc_with_km_sr = load_data()
 
-    users_tasks = map_user_tasks(data_frames, user_info)
+    users_tasks, _ = map_user_tasks(data_nc_with_km_sr, user_info)
 
     pre_train_time = time.time()
     if args.only_solo:
@@ -113,10 +112,10 @@ if __name__ == '__main__':
                                       args.reset_origin, args.norm_time)
         data = train_data_km
     else:
-        data_nc_with_km_sr_last = get_data_last_only(data_nc_with_km_sr)
-        data_nc_with_km_sr_last_filtered = filter_by_user_info(user_info, data_nc_with_km_sr_last, users_tasks)
-        dfs = data_nc_with_km_sr_last_filtered
-        train_data_km_last = extract_data(data_nc_with_km_sr_last_filtered, users_tasks, user_info,
+        # data_nc_with_km_sr_last = get_data_last_only(data_nc_with_km_sr)
+        # data_nc_with_km_sr_last_filtered = filter_by_user_info(user_info, data_nc_with_km_sr_last, users_tasks)
+        dfs = data_nc_with_km_sr
+        train_data_km_last = extract_data(data_nc_with_km_sr, users_tasks, user_info,
                                           args.max_events, args.min_events, args.standardize, args.normalize,
                                           args.reset_origin, args.norm_time)
         data = train_data_km_last

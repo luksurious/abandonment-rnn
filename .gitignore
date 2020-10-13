@@ -8,3 +8,5 @@ results.*
 experiments.md
 experiments/
 scripts/
+!data/mouse_logs_filtered.pkl
+!data/user_info_filtered.pkl

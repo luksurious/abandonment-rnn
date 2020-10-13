@@ -16,7 +16,37 @@ PATH = 'kge/'
 VERBOSE = False
 
 
+def load_data():
+    was_user_info_loaded = True
+    try:
+        user_info = pickle.load(open("data/user_info_filtered.pkl", "rb"))
+    except Exception:
+        user_info = read_kge_log()
+        was_user_info_loaded = False
+
+    was_data_loaded = True
+    try:
+        data_frames = pickle.load(open("data/mouse_logs_filtered.pkl", "rb"))
+    except Exception:
+        data_frames = read_csv_logs(user_info)
+        was_data_loaded = False
+
+    if not was_data_loaded:
+        data_frames = filter_data_frames(data_frames, user_info, True)
+        # user_info = filter_user_info(user_info, data_frames)
+    if not was_user_info_loaded:
+        user_info = filter_user_info(user_info, data_frames)
+
+    return user_info, data_frames
+
+
 def read_kge_log():
+    try:
+        user_info = pickle.load(open("data/user_info.pkl", "rb"))
+        return user_info
+    except Exception:
+        pass
+
     with open(PATH + "kge.log", 'r') as f:
         fo = io.StringIO()
         data = f.readlines()
@@ -34,16 +64,19 @@ def read_kge_log():
     user_info['moduleWasFasterBinary'] = 0
     user_info.loc[user_info['moduleWasFaster'] > 3, 'moduleWasFasterBinary'] = 1
 
+    pickle.dump(user_info, open("data/user_info.pkl", "wb"))
+
     return user_info
 
 
 def read_csv_logs(user_info):
     try:
-        data_frames = pickle.load(open("mouse_logs.pkl", "rb"))
+        data_frames = pickle.load(open("data/mouse_logs.pkl", "rb"))
         return data_frames
     except Exception:
         pass
 
+    # read from scratch
     user_ids = user_info["userId"]
 
     data_frames = []
@@ -121,15 +154,15 @@ def read_csv_logs(user_info):
 
     print("\nWith %s got %d errors" % (quote_replacement, error_count))
 
-    with open('user-file-map.json', 'w') as fp:
+    with open('data/user-file-map.json', 'w') as fp:
         json.dump(file_user_map, fp)
 
-    pickle.dump(data_frames, open("mouse_logs.pkl", "wb"))
+    pickle.dump(data_frames, open("data/mouse_logs.pkl", "wb"))
 
     return data_frames
 
 
-def filter_data_frames(data_frames):
+def filter_data_frames(data_frames, user_info, only_final=True):
     data_no_clicks = [df for df in data_frames if len(df[df["event"] == "click"]) == 0
                       and len(df[df["event"] == "mousemove"]) > 0]
 
@@ -147,7 +180,31 @@ def filter_data_frames(data_frames):
     # print("Frames without clicks with KM on search page: %d" % len(data_nc_with_km_sr))
     # print("Frames without clicks without KM on search page: %d" % len(data_nc_without_km_sr))
 
-    return data_nc_with_km_sr, data_nc_without_km_sr
+    data = (data_nc_with_km_sr, data_nc_without_km_sr)
+    if only_final:
+        data_nc_with_km_sr = get_data_last_only(data_nc_with_km_sr)
+        data_nc_with_km_sr = [df for df in data_nc_with_km_sr if len(df[df["event"] == "mousemove"]) > 1]
+        users_tasks, _ = map_user_tasks(data_nc_with_km_sr, user_info)
+        data_nc_with_km_sr = filter_by_user_info(user_info, data_nc_with_km_sr, users_tasks)
+
+        data = [df.drop(columns=['xpath', 'attrs', 'cursor', 'url', 'file']) for df in data_nc_with_km_sr]
+    pickle.dump(data, open("data/mouse_logs_filtered.pkl", "wb"))
+
+    return data
+
+
+def filter_user_info(user_info, df1):
+    _, filter1 = map_user_tasks(df1, user_info)
+
+    user_info_filtered = user_info[filter1].reset_index()
+
+    for col in ['IP', 'index', 'timestamp', 'moduleWasFaster', 'moduleWasUseful', 'URL']:
+        if col in user_info_filtered.columns:
+            user_info_filtered.drop(columns=[col], inplace=True)
+
+    pickle.dump(user_info_filtered, open("data/user_info_filtered.pkl", "wb"))
+
+    return user_info_filtered
 
 
 def get_data_last_only(data_nc_with_km_sr):
@@ -195,7 +252,7 @@ def map_user_tasks(data_frames, user_info):
         if task_id in users_tasks and row['moduleVisibility'] == 1:
             users_tasks[task_id] = index
 
-    return users_tasks
+    return users_tasks, user_info_filter
 
 
 def filter_by_user_info(user_info, data_frames, users_tasks):
@@ -217,8 +274,6 @@ def filter_by_user_info(user_info, data_frames, users_tasks):
                 user_info_filter[index] = False
             else:
                 user_dupes_seen.append(row['userId'])
-
-    len(user_info[user_info_filter])
 
     for idx, df in enumerate(data_frames):
         task_id = df["user"].values[0] + df["query"].values[0] + df["session"].values[0]
@@ -528,4 +583,3 @@ def calc_velocity(mouse_moves_time):
         velocities.append(velocity_seq)
 
     return np.array(velocities).reshape(-1, len(item), 1)
-

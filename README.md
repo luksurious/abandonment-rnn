@@ -23,7 +23,7 @@ _Examples_:
 ## Data
 
 The data used is from [Predicting User Engagement with Direct Displays Using Mouse Cursor Information](https://dl.acm.org/doi/10.1145/2911451.2911505).
-Unfortunately, it is proprietary, so it cannot be shared in this repository.
+The original data is proprietary, but we were allowed to share the cleaned subset of the data that was used in this study (see `data/` folder). That way, the experiments can be run as is, and minor modifications and adjustments should be possible.
 
 ## Citation
 
